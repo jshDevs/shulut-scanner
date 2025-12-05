@@ -25,9 +25,9 @@ Protege tus proyectos Node.js contra el malware SHULUT 2.0 con escaneo automatiz
 - [Inicio Rápido](#-inicio-rápido)
 - [Uso](#-uso)
 - [Indicadores de Compromiso](#-indicadores-de-compromiso-iocs)
-- [Remediación](#-remediación)
+- [Remediación](#-Remediación)
 - [Integración CI/CD](#-integración-cicd)
-- [Roadmap](#-roadmap)
+- [Roadmap](#-Roadmap)
 - [Contribución](#-contribución)
 - [Licencia](#-licencia)
 
