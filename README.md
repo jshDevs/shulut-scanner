@@ -228,7 +228,7 @@ process.env.AWS_*
 
 ---
 
-## 🛠️ Remediación
+## Remediación
 
 ### Proceso Automático
 
