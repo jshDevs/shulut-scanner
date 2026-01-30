@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """
 SHULUT 2.0 Advanced Detection & Analysis Engine
+Version: 2.1.0
 Professional malware detector for npm packages and projects
 Compatible with: Linux, macOS, Windows (WSL)
+
+Updated: January 2026
+New detections: Bun variants, GitHub Actions persistence, exfiltration repos
 """
 
 import os
@@ -19,6 +23,9 @@ from datetime import datetime
 from typing import List, Dict, Tuple, Set
 from collections import defaultdict
 
+# Version
+VERSION = "2.1.0"
+
 # Color codes
 class Colors:
     GREEN = '\033[92m'
@@ -30,15 +37,22 @@ class Colors:
     RESET = '\033[0m'
     BOLD = '\033[1m'
 
-# Malware signatures database
+# Malware signatures database - UPDATED FOR SHULUT 2.0 (Jan 2026)
 MALWARE_SIGNATURES = {
     'van-environment.js': {
         'hash_patterns': [
             'van-environment',
             'setupban',
-            'shai-hulut'
+            'shai-hulut',
+            'setup_bun',        # NEW: Bun variant
+            'bun_environment'   # NEW: 10MB+ payload variant
         ],
-        'file_indicators': ['van-environment.js', 'setupban.js'],
+        'file_indicators': [
+            'van-environment.js', 
+            'setupban.js',
+            'setup_bun.js',     # NEW: Bun runtime variant
+            'bun_environment.js' # NEW: Large payload file
+        ],
         'severity': 'CRITICAL'
     },
     'preinstall_hooks': {
@@ -48,7 +62,10 @@ MALWARE_SIGNATURES = {
             r'shai-hulut',
             r'node.*--exec',
             r'curl.*eval',
-            r'wget.*eval'
+            r'wget.*eval',
+            r'setup_bun',        # NEW: Bun installer pattern
+            r'bun\s+install',    # NEW: Fake Bun installer
+            r'\.detach\s*\(',    # NEW: Background process detachment
         ],
         'severity': 'HIGH'
     },
@@ -59,7 +76,9 @@ MALWARE_SIGNATURES = {
             'van-environment',
             'setupban',
             'node-setupban',
-            'ban-install'
+            'ban-install',
+            'setup-bun',         # NEW: Typosquat
+            'bun-environment'    # NEW: Typosquat
         ],
         'severity': 'CRITICAL'
     },
@@ -71,7 +90,9 @@ MALWARE_SIGNATURES = {
             r'~/.ssh',
             r'~/.aws/credentials',
             r'process\.env\.(API|SECRET|TOKEN|KEY)',
-            r'github\.com.*token'
+            r'github\.com.*token',
+            r'GITHUB_TOKEN',     # NEW: Specific token pattern
+            r'NPM_TOKEN'         # NEW: NPM auth token
         ],
         'severity': 'CRITICAL'
     },
@@ -85,6 +106,16 @@ MALWARE_SIGNATURES = {
             r'require.*fork'
         ],
         'severity': 'HIGH'
+    },
+    'github_actions_persistence': {  # NEW: GitHub Actions detection
+        'patterns': [
+            r'self-hosted',
+            r'curl.*\|.*bash',
+            r'wget.*\|.*sh',
+            r'base64.*decode.*exec',
+            r'discussion\.ya?ml'
+        ],
+        'severity': 'CRITICAL'
     }
 }
 
@@ -227,7 +258,7 @@ class MalwareDetector:
         """Scan package files for malicious code patterns"""
         findings = []
         
-        # Sample scan first 10 packages
+        # Sample scan first 50 packages
         scanned = 0
         for pkg_dir in node_modules.iterdir():
             if scanned >= 50:  # Limit for performance
@@ -288,6 +319,101 @@ class MalwareDetector:
         
         return findings
     
+    def scan_github_actions(self, project_dir: Path) -> List[Dict]:
+        """NEW: Scan for malicious GitHub Actions workflows"""
+        findings = []
+        workflows_dir = project_dir / '.github' / 'workflows'
+        
+        if not workflows_dir.exists():
+            return findings
+        
+        logger.info(f"Scanning GitHub Actions: {workflows_dir}")
+        
+        for workflow_file in list(workflows_dir.glob('*.yml')) + list(workflows_dir.glob('*.yaml')):
+            try:
+                with open(workflow_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    
+                    # Detect malicious self-hosted runner + suspicious filename
+                    if 'self-hosted' in content and 'discussion' in workflow_file.name.lower():
+                        findings.append({
+                            'type': 'MALICIOUS_GITHUB_ACTION',
+                            'severity': 'CRITICAL',
+                            'path': str(workflow_file),
+                            'note': 'Self-hosted runner persistence mechanism detected (SHULUT 2.0 pattern)'
+                        })
+                    
+                    # Detect suspicious patterns in workflows
+                    for pattern in MALWARE_SIGNATURES['github_actions_persistence']['patterns']:
+                        if re.search(pattern, content, re.IGNORECASE):
+                            findings.append({
+                                'type': 'SUSPICIOUS_WORKFLOW',
+                                'severity': 'HIGH',
+                                'path': str(workflow_file),
+                                'pattern': pattern,
+                                'note': 'Potentially malicious GitHub Actions pattern'
+                            })
+            except Exception as e:
+                logger.warning(f"Cannot scan workflow {workflow_file}: {e}")
+        
+        return findings
+    
+    def scan_exfiltration_repos(self, project_dir: Path) -> List[Dict]:
+        """NEW: Detect data exfiltration repositories (Sha1-Hulud: The Second Coming)"""
+        findings = []
+        
+        try:
+            # Check .git/config for suspicious remote URLs
+            git_config = project_dir / '.git' / 'config'
+            if git_config.exists():
+                with open(git_config, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    
+                    # Detect known exfiltration indicators
+                    exfil_indicators = [
+                        'shai-hulud',
+                        'sha1-hulud',
+                        'second coming',
+                        'setupban',
+                        'van-environment'
+                    ]
+                    
+                    for indicator in exfil_indicators:
+                        if indicator in content.lower():
+                            findings.append({
+                                'type': 'EXFILTRATION_REPOSITORY',
+                                'severity': 'CRITICAL',
+                                'path': str(git_config),
+                                'indicator': indicator,
+                                'note': 'Potential data exfiltration repository detected'
+                            })
+            
+            # Check git remotes
+            result = subprocess.run(
+                ['git', 'remote', '-v'],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            
+            if result.returncode == 0:
+                remotes = result.stdout.lower()
+                for indicator in exfil_indicators:
+                    if indicator in remotes:
+                        findings.append({
+                            'type': 'SUSPICIOUS_REMOTE',
+                            'severity': 'CRITICAL',
+                            'remote_content': result.stdout[:200],
+                            'indicator': indicator,
+                            'note': f'Suspicious remote repository name: {indicator}'
+                        })
+        
+        except Exception as e:
+            logger.warning(f"Cannot scan for exfiltration repos: {e}")
+        
+        return findings
+    
     def scan_git_history(self, project_dir: Path) -> List[Dict]:
         """Analyze git history for suspicious activity"""
         findings = []
@@ -321,9 +447,11 @@ class MalwareDetector:
     
     def full_scan(self, start_path: Path) -> Dict:
         """Execute full scan of all projects"""
-        logger.header("STARTING COMPREHENSIVE SCAN")
+        logger.header(f"SHULUT SCANNER v{VERSION} - COMPREHENSIVE SCAN")
         
         results = {
+            'version': VERSION,
+            'scan_timestamp': datetime.now().isoformat(),
             'scanned_projects': 0,
             'infected_projects': 0,
             'total_findings': 0,
@@ -346,10 +474,12 @@ class MalwareDetector:
             
             logger.info(f"[{idx}/{len(projects)}] Scanning: {project_dir.name}")
             
-            # Run all scans
+            # Run all scans (including NEW scans)
             project_findings.extend(self.scan_package_json(pkg_file))
             project_findings.extend(self.scan_node_modules(project_dir))
             project_findings.extend(self.scan_credentials(project_dir))
+            project_findings.extend(self.scan_github_actions(project_dir))  # NEW
+            project_findings.extend(self.scan_exfiltration_repos(project_dir))  # NEW
             project_findings.extend(self.scan_git_history(project_dir))
             
             results['scanned_projects'] += 1
@@ -373,6 +503,8 @@ class MalwareDetector:
         """Generate detailed report"""
         logger.header("SCAN REPORT")
         
+        print(f"Scanner Version: {results.get('version', VERSION)}")
+        print(f"Scan Time: {results.get('scan_timestamp', 'N/A')}")
         print(f"Total Projects Scanned: {results['scanned_projects']}")
         print(f"Infected Projects: {Colors.RED}{results['infected_projects']}{Colors.RESET}")
         print(f"Total Findings: {results['total_findings']}")
@@ -390,7 +522,10 @@ class MalwareDetector:
                         'MEDIUM': Colors.BLUE
                     }.get(finding.get('severity'), '')
                     
-                    print(f"    {severity_color}→{Colors.RESET} {finding['type']}: {finding.get('package', finding.get('file_name', ''))}")
+                    detail = finding.get('package', finding.get('file_name', finding.get('indicator', '')))
+                    print(f"    {severity_color}→{Colors.RESET} {finding['type']}: {detail}")
+                    if finding.get('note'):
+                        print(f"      {Colors.CYAN}Note:{Colors.RESET} {finding['note']}")
         
         # Save JSON report
         if output_file:
@@ -418,15 +553,19 @@ class Remediator:
             logger.info("Removing malicious files...")
             self._remove_malicious_files(project_dir)
             
-            # 3. Clean node_modules
+            # 3. Remove malicious workflows (NEW)
+            logger.info("Removing malicious GitHub Actions...")
+            self._remove_malicious_workflows(project_dir)
+            
+            # 4. Clean node_modules
             logger.info("Removing contaminated node_modules...")
             self._clean_node_modules(project_dir)
             
-            # 4. Clean package.json
+            # 5. Clean package.json
             logger.info("Cleaning package.json...")
             self._clean_package_json(project_dir)
             
-            # 5. Reinstall dependencies
+            # 6. Reinstall dependencies
             logger.info("Reinstalling dependencies...")
             self._reinstall_dependencies(project_dir)
             
@@ -456,6 +595,25 @@ class Remediator:
                     logger.success(f"Removed: {file.name}")
                 except Exception as e:
                     logger.warning(f"Cannot remove {file}: {e}")
+    
+    def _remove_malicious_workflows(self, project_dir: Path):
+        """NEW: Remove malicious GitHub Actions workflows"""
+        workflows_dir = project_dir / '.github' / 'workflows'
+        
+        if not workflows_dir.exists():
+            return
+        
+        for workflow_file in list(workflows_dir.glob('*.yml')) + list(workflows_dir.glob('*.yaml')):
+            try:
+                with open(workflow_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    
+                # Remove if contains self-hosted + discussion pattern
+                if 'self-hosted' in content and 'discussion' in workflow_file.name.lower():
+                    workflow_file.unlink()
+                    logger.success(f"Removed malicious workflow: {workflow_file.name}")
+            except Exception as e:
+                logger.warning(f"Cannot process workflow {workflow_file}: {e}")
     
     def _clean_node_modules(self, project_dir: Path):
         """Remove node_modules"""
@@ -487,6 +645,7 @@ class Remediator:
                 for pattern in MALWARE_SIGNATURES['preinstall_hooks']['patterns']:
                     if re.search(pattern, preinstall, re.IGNORECASE):
                         del pkg_data['scripts']['preinstall']
+                        logger.success("Removed malicious preinstall script")
                         break
             
             with open(pkg_file, 'w', encoding='utf-8') as f:
@@ -501,24 +660,25 @@ class Remediator:
         """Reinstall clean dependencies"""
         try:
             subprocess.run(
-                ['npm', 'install'],
+                ['npm', 'install', '--ignore-scripts'],  # Added --ignore-scripts for safety
                 cwd=project_dir,
                 capture_output=True,
                 timeout=300
             )
-            logger.success("Dependencies reinstalled")
+            logger.success("Dependencies reinstalled (with --ignore-scripts)")
         except Exception as e:
             logger.error(f"npm install failed: {e}")
 
 def main():
     parser = argparse.ArgumentParser(
-        description='SHULUT 2.0 Advanced Detection & Remediation Engine'
+        description=f'SHULUT Scanner v{VERSION} - Advanced Detection & Remediation Engine'
     )
     parser.add_argument('path', nargs='?', default='.', help='Path to scan')
     parser.add_argument('--scan', action='store_true', help='Run scan only')
     parser.add_argument('--remediate', action='store_true', help='Scan and remediate')
     parser.add_argument('--report', type=str, help='Save JSON report to file')
     parser.add_argument('--verbose', action='store_true', help='Verbose output')
+    parser.add_argument('--version', action='version', version=f'SHULUT Scanner {VERSION}')
     
     args = parser.parse_args()
     start_path = Path(args.path).resolve()
