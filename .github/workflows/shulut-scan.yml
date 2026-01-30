@@ -1,0 +1,76 @@
+name: SHULUT Security Scan
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 */6 * * *'  # Cada 6 horas
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Download SHULUT Scanner
+      run: |
+        curl -sSL https://raw.githubusercontent.com/jshDevs/shulut-scanner/main/shulut_detector.py -o shulut_detector.py
+        chmod +x shulut_detector.py
+
+    - name: Run SHULUT scan
+      id: scan
+      run: |
+        python shulut_detector.py . --scan --report scan-results.json
+      continue-on-error: true
+
+    - name: Upload scan results artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: shulut-scan-results
+        path: scan-results.json
+
+    - name: Comment PR with results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          const reportPath = path.join(process.cwd(), 'scan-results.json');
+
+          let summary = 'No scan report found';
+          try {
+            const data = fs.readFileSync(reportPath, 'utf8');
+            const results = JSON.parse(data);
+            summary = `## 🛡️ SHULUT Security Scan Results\n\n` +
+              `- **Scanner Version:** ${results.version || 'N/A'}\n` +
+              `- **Scanned Projects:** ${results.scanned_projects}\n` +
+              `- **Infected Projects:** ${results.infected_projects}\n` +
+              `- **Critical Findings:** ${results.critical_findings}\n\n` +
+              `${results.critical_findings > 0 ? '⚠️ **CRITICAL:** Malware or suspicious activity detected. Please review findings.' : '✅ No critical threats detected.'}`;
+          } catch (e) {
+            summary = `⚠️ SHULUT scan could not read results: ${e.message}`;
+          }
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: summary,
+          });
+
+    - name: Fail job if critical findings detected
+      if: steps.scan.outcome == 'failure'
+      run: |
+        echo "SHULUT scan reported critical findings. Failing pipeline." >&2
+        exit 1
